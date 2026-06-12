@@ -40,7 +40,7 @@ def diagnose():
 
 def reload_and_open():
     """Dev helper: reload all modules then reopen the picker."""
-    from character_picker import rig_discovery, layout, selection, picker_qt
-    for mod in (rig_discovery, layout, selection, picker_qt):
+    from character_picker import rig_discovery, layout, layout_store, selection, picker_qt
+    for mod in (rig_discovery, layout, layout_store, selection, picker_qt):
         reload(mod)
     picker_qt.open_picker()

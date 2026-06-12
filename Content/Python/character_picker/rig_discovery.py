@@ -24,6 +24,12 @@ class RigEntry:
         self.blueprint_path = blueprint_path    # asset path (asset source)
         self._blueprint = None                  # lazily loaded ControlRigBlueprint
 
+    @property
+    def rig_key(self):
+        """Stable identifier shared by the sequencer and asset entries of a rig
+        (used to key saved picker layouts)."""
+        return self.label.replace("[Sequencer] ", "", 1)
+
     # ------------------------------------------------------------------ access
 
     def get_blueprint(self):
