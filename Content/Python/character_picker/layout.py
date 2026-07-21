@@ -45,8 +45,6 @@ def _shape_position(hierarchy, key):
 
 
 def _control_settings(hierarchy, key):
-    # API exposure varies per build: try the direct getter, then go through
-    # the control element itself.
     try:
         return hierarchy.get_control_settings(key)
     except Exception:
@@ -73,18 +71,14 @@ def _is_pickable(settings):
     controls. Nulls, connectors and sockets never reach this point (the key
     type filter only lets CONTROL elements through)."""
     if settings is None:
-        return True  # settings unreadable in this build: keep rather than hide
+        return True
     try:
         anim_type = settings.get_editor_property("animation_type")
-        # PROXY_CONTROL stays: proxies are visible, selectable driver shapes.
         if anim_type not in (unreal.RigControlAnimationType.ANIMATION_CONTROL,
                              unreal.RigControlAnimationType.PROXY_CONTROL):
             return False
     except Exception:
         pass
-    # Note: shape_visible is deliberately NOT checked — rigs hide FK shapes
-    # behind IK/FK switches, and the picker is exactly how an animator grabs
-    # those hidden controls.
     return True
 
 
@@ -100,9 +94,6 @@ def _color_of(settings):
     return _FALLBACK_COLOR
 
 
-# Rig shape names that should read as squares in the picker
-# (Box_Thick, Square_Thin, Cube...). Plus a naming-convention rule: spine
-# controls are drawn square regardless of their rig shape.
 _SQUARE_HINTS = ("box", "square", "cube", "rectangle")
 
 
@@ -126,8 +117,6 @@ def build_layout(hierarchy):
     missing_settings = 0
     for key in _control_keys(hierarchy):
         name = str(key.name)
-        # Tangent controls (chest_tan_ctrl...) are rig plumbing, useless to
-        # the animator.
         if re.search(r"(?:^|_)tan(?:_|$)", name.lower()):
             continue
         settings = _control_settings(hierarchy, key)
@@ -152,9 +141,9 @@ def build_layout(hierarchy):
     xs = [p[2][0] for p in raw]
     ys = [p[2][1] for p in raw]
     zs = [p[2][2] for p in raw]
-    # raw tuples: (key, name, position, color, shape_kind)
 
-    # The wider horizontal axis is the character's left/right axis.
+
+
     spread_x = max(xs) - min(xs)
     spread_y = max(ys) - min(ys)
     h_values = ys if spread_y >= spread_x else xs
@@ -164,30 +153,23 @@ def build_layout(hierarchy):
     h_range = max(h_max - h_min, 1e-3)
     v_range = max(v_max - v_min, 1e-3)
 
-    # Keep the character's aspect ratio: pad the narrow axis so a tall
-    # biped doesn't get stretched into a square.
+
     aspect = h_range / v_range
     buttons = []
     for i, (key, name, (x, y, z), color, shape) in enumerate(raw):
         h = h_values[i]
         nx = (h - h_min) / h_range
-        ny = 1.0 - (z - v_min) / v_range  # canvas Y grows downward
-        if aspect < 1.0:  # narrow character: center horizontally
+        ny = 1.0 - (z - v_min) / v_range
+        if aspect < 1.0: 
             nx = 0.5 + (nx - 0.5) * aspect
-        else:             # wide rig (quadruped side spread): center vertically
+        else:
             ny = 0.5 + (ny - 0.5) / aspect
         label = "IK" if re.search(r"(?:^|_)ik(?:_|$)", name.lower()) else ""
         buttons.append(PickerButton(key, name, nx, ny, color, 1.0, shape, label))
 
-    # Mirror left/right if needed so the picker reads like a mirror
-    # (character's left on screen right is the usual animator convention —
-    # here we keep world orientation; flip in the UI if preferred).
     return _finalize(buttons)
 
 
-# Virtual canvas the de-overlap pass works in, sized to the picker window's
-# default canvas (420x680 window minus header/margins). Button sizes mirror
-# picker_qt (BUTTON_SIZE=16, squares 1.6x wide).
 _VIRTUAL_W = 360.0
 _VIRTUAL_H = 520.0
 _BTN = 16.0
@@ -209,24 +191,15 @@ def _finalize(buttons):
         h = _BTN * b.scale
         radii.append(max(w, h) / 2.0 + _PAD)
 
-    # Root / global / body-offset controls go to a pinned row in the
-    # top-left corner; they are excluded from every other pass.
     anchors = _layout_anchor_block(buttons, xs, ys, radii)
     anchor_set = set(anchors)
 
-    # Controls sitting near the character's center line snap onto an exact
-    # vertical column (head, jaw, neck, chest, spine, hips...). Side-paired
-    # controls (eyes, clavicles...) are never centerline controls, even when
-    # they project close to the axis.
     pairs = _side_pairs(buttons)
     paired_set = {i for pair in pairs for i in pair}
     midline = _snap_midline(xs, exclude=anchor_set | paired_set)
 
-    # Fingers get a dedicated hand-block layout; they are excluded from the
-    # generic chain alignment below.
     hand_blocks, finger_idxs = _layout_fingers(buttons, xs, ys, radii)
 
-    # Legs stack into one vertical column per side, anatomical order.
     leg_blocks, leg_idxs = _layout_leg_columns(
         buttons, xs, ys, radii, exclude=anchor_set | finger_idxs)
 
@@ -234,8 +207,6 @@ def _finalize(buttons):
     for chain in chains:
         _align_chain(xs, ys, radii, chain)
 
-    # Chains, hand/leg blocks and the anchor row move as rigid blocks during
-    # the de-overlap pass; everything else is its own group of one.
     rigid = chains + hand_blocks + leg_blocks + ([anchors] if anchors else [])
     gid = list(range(n))
     for c, group in enumerate(rigid):
@@ -246,19 +217,11 @@ def _finalize(buttons):
         members[gid[i]].append(i)
 
     pinned = {gid[anchors[0]]} if anchors else set()
-    # Groups made only of midline controls may only slide vertically, so the
-    # center column stays a column.
     y_only = {g for g, idxs in members.items()
               if g not in pinned and all(i in midline for i in idxs)}
 
-    # Stack the center column explicitly (pairwise relaxation cannot expel a
-    # control trapped between two links of a rigid chain).
     _pack_column(ys, radii, members, y_only)
 
-    # Strict left/right symmetry: start from a mirrored pose, then relax with
-    # both sides colliding normally while re-symmetrizing every pair after
-    # each iteration (average the two sides, mirror back). Symmetry is exact
-    # by construction and collisions stay resolved on both sides.
     _apply_mirror(xs, ys, pairs)
 
     _relax(xs, ys, radii, gid, members, pinned, y_only, sym_pairs=pairs)
@@ -269,10 +232,6 @@ def _finalize(buttons):
     return buttons
 
 
-# ------------------------------------------------------- anchors and midline
-
-# Name tokens of "scene scope" controls shown as a row in the top-left
-# corner (like wrld/gbl/loc on hand-made pickers).
 _ANCHOR_TOKENS = {"root", "global", "world", "main", "master", "god",
                   "gbl", "wrld", "loc", "placement", "trajectory"}
 
@@ -356,7 +315,7 @@ def _layout_fingers(buttons, xs, ys, radii):
         match = re.search(r"(?:^|_)(l|r|left|right)(?:_|$|\d)", name)
         if match:
             side = match.group(1)[0]
-        else:  # no side token: infer from which half of the canvas it is on
+        else:
             side = "l" if xs[idx] < _VIRTUAL_W / 2.0 else "r"
         hands[side].append((finger, _finger_rank(name), idx))
 
@@ -378,9 +337,6 @@ def _layout_fingers(buttons, xs, ys, radii):
         for finger, rank, idx in items:
             col = present.index(finger)
             xs[idx] = cx + direction * ((cols - 1) / 2.0 - col) * spacing
-            # Rows hang below the hand (the fingers project at hand height,
-            # which would crowd the wrist row): rank 0 one row under the
-            # block's center, going down.
             ys[idx] = cy + (rank - rank_min + 1.0) * spacing
         hand_blocks.append(idxs)
     return hand_blocks, finger_idxs
@@ -488,15 +444,13 @@ def _align_chain(xs, ys, radii, chain):
     syy = sum((p[1] - cy) ** 2 for p in pts)
     sxy = sum((p[0] - cx) * (p[1] - cy) for p in pts)
 
-    if sxx + syy < 1.0:  # all stacked: no direction to read, go vertical
+    if sxx + syy < 1.0:
         ux, uy = 0.0, 1.0
     else:
         angle = 0.5 * math.atan2(2.0 * sxy, sxx - syy)
         ux, uy = math.cos(angle), math.sin(angle)
 
     ts = [(p[0] - cx) * ux + (p[1] - cy) * uy for p in pts]
-    # Keep the chain's natural reading direction: if numeric order runs
-    # against the axis, flip the axis.
     drift = sum(k * t for k, t in enumerate(ts))
     if drift < 0:
         ux, uy, ts = -ux, -uy, [-t for t in ts]

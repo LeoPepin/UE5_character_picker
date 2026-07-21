@@ -5,10 +5,8 @@ Control Rig in the project, auto-generates a 2D picker layout from each rig's
 control shapes (no per-rig setup), and selects controls either on the live rig
 in **Sequencer** or inside the **Control Rig asset editor**.
 
-Built with Python + a PySide6 (Qt) window — no C++, no compiling. UMG was the
-original plan, but UE does not expose widget trees to Python (`widget_tree` /
-`get_widget_from_name` are unavailable), so the UI is Qt, pumped from a Slate
-post-tick callback — the standard pattern for Python tools inside the editor.
+Built with Python + a PySide6 (Qt) window — no C++, no compiling. The UI is Qt, pumped from a Slate
+post-tick callback.
 
 ## How it works
 

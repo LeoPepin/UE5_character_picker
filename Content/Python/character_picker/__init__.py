@@ -4,8 +4,7 @@ Discovers every Control Rig in the project, auto-generates a 2D picker
 layout from each rig's control shapes, and selects controls either on the
 live rig bound in Sequencer or inside the Control Rig asset editor.
 
-The UI is a PySide6 window driven from UE's Python (UMG widget trees are
-not scriptable from Python). PySide6 is auto-installed on first run.
+The UI is a PySide6 window driven from UE's Python. PySide6 is auto-installed on first run.
 
 Usage (from the UE Python console or the Tools menu):
     import character_picker
