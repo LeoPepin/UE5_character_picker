@@ -42,12 +42,23 @@ class RigEntry:
         if self.source == self.SOURCE_SEQUENCER and self.control_rig:
             return self.control_rig.get_hierarchy()
         bp = self.get_blueprint()
-        if bp:
-            # ControlRigBlueprint exposes its hierarchy as a property.
+        if not bp:
+            return None
+        # ControlRigBlueprint exposes its hierarchy as a property; the UE 5.8
+        # ControlRigRuntimeAsset may expose it differently, so try each way.
+        for getter in (lambda: bp.hierarchy,
+                       lambda: bp.get_editor_property("hierarchy"),
+                       lambda: bp.get_hierarchy(),
+                       lambda: unreal.get_default_object(
+                           bp.generated_class()).get_hierarchy()):
             try:
-                return bp.hierarchy
-            except AttributeError:
-                return bp.get_editor_property("hierarchy")
+                hierarchy = getter()
+            except Exception:
+                continue
+            if hierarchy is not None:
+                return hierarchy
+        unreal.log_warning(f"[CharacterPicker] No hierarchy accessor on "
+                           f"{self.label} ({bp.get_class().get_name()}).")
         return None
 
     def is_valid(self):
@@ -58,6 +69,11 @@ class RigEntry:
 
 
 # ---------------------------------------------------------------------- scans
+
+_RIG_ASSET_CLASSES = (
+    unreal.TopLevelAssetPath("/Script/ControlRigDeveloper", "ControlRigBlueprint"),
+    unreal.TopLevelAssetPath("/Script/ControlRig", "ControlRigRuntimeAsset"),
+)
 
 def find_sequencer_rigs():
     """Rigs bound on the level sequence currently focused in Sequencer."""
@@ -93,19 +109,33 @@ def find_sequencer_rigs():
 
 
 def find_asset_rigs():
-    """Every ControlRigBlueprint asset in the project."""
+    """Every ControlRigBlueprint asset in the project's own content.
+
+    Engine and plugin rigs (modular/procedural rig parts under /ControlRig/,
+    /Engine/, etc.) are skipped: only /Game/ assets are the project's rigs."""
     entries = []
     registry = unreal.AssetRegistryHelpers.get_asset_registry()
-    class_path = unreal.TopLevelAssetPath("/Script/ControlRigDeveloper", "ControlRigBlueprint")
-    assets = registry.get_assets_by_class(class_path, search_sub_classes=True) or []
+    assets = []
+    for class_path in _RIG_ASSET_CLASSES:
+        assets += registry.get_assets_by_class(class_path, search_sub_classes=True) or []
+    skipped = 0
+    seen = set()
     for asset_data in assets:
         path = str(asset_data.get_editor_property("package_name"))
+        if path in seen:
+            continue
+        seen.add(path)
+        if not path.startswith("/Game/"):
+            skipped += 1
+            continue
         name = str(asset_data.get_editor_property("asset_name"))
         entries.append(RigEntry(
             label=name,
             source=RigEntry.SOURCE_ASSET,
             blueprint_path=path,
         ))
+    if skipped:
+        unreal.log(f"[CharacterPicker] Skipped {skipped} engine/plugin rig asset(s).")
     entries.sort(key=lambda e: e.label.lower())
     return entries
 
