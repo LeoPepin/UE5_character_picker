@@ -4,9 +4,13 @@ The auto-generated layout is the starting point; in Edit mode the user
 drags buttons into place and saves. Each rig gets one JSON file whose
 shapes follow a simplified dwpicker schema:
 
-    {"version": 1, "rig": "CR_Atom", "shapes": [
+    {"version": 1, "rig": "CR_Atom", "background": "Content/picker_bg.png",
+     "shapes": [
         {"target": "spine_01_ctrl", "left": 0.45, "top": 0.52,
          "shape": "square", "scale": 1.0}, ...]}
+
+`background` is optional: an image drawn behind the buttons, relative to
+the project folder when it lives inside it, absolute otherwise.
 
 `left`/`top` are normalized 0..1 (dwpicker uses pixels; normalized keeps
 the layout valid at any window size). Controls missing from the file keep
@@ -33,18 +37,60 @@ def path_for(rig_key):
     return os.path.join(layouts_dir(), safe + ".json")
 
 
-def load(rig_key):
-    """Return {control_name: shape_dict} for this rig, or {} if no file."""
+def _read(rig_key):
+    """The rig's raw layout file content, or {} if there is none."""
     path = path_for(rig_key)
     if not os.path.exists(path):
         return {}
     try:
         with open(path, "r", encoding="utf-8") as handle:
-            data = json.load(handle)
+            return json.load(handle)
     except Exception as exc:
         unreal.log_warning(f"[CharacterPicker] Could not read layout {path}: {exc}")
         return {}
+
+
+def _write(rig_key, data):
+    os.makedirs(layouts_dir(), exist_ok=True)
+    path = path_for(rig_key)
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(data, handle, indent=2)
+    return path
+
+
+def load(rig_key):
+    """Return {control_name: shape_dict} for this rig, or {} if no file."""
+    data = _read(rig_key)
     return {s["target"]: s for s in data.get("shapes", []) if "target" in s}
+
+
+def get_background(rig_key):
+    """Absolute path of the rig's background image, or None."""
+    stored = _read(rig_key).get("background")
+    if not stored:
+        return None
+    if os.path.isabs(stored):
+        return stored
+    return os.path.normpath(os.path.join(unreal.Paths.project_dir(), stored))
+
+
+def set_background(rig_key, image_path):
+    """Store (or clear, with None) the rig's background image. Images inside
+    the project are stored relative to it so the layout stays portable."""
+    data = _read(rig_key) or {"version": VERSION, "rig": rig_key, "shapes": []}
+    if image_path:
+        project_dir = os.path.abspath(unreal.Paths.project_dir())
+        image_path = os.path.abspath(image_path)
+        try:
+            relative = os.path.relpath(image_path, project_dir)
+        except ValueError:  # other drive on Windows
+            relative = None
+        if relative and not relative.startswith(".."):
+            image_path = relative
+        data["background"] = image_path.replace("\\", "/")
+    else:
+        data.pop("background", None)
+    return _write(rig_key, data)
 
 
 def apply_overrides(buttons, overrides):
@@ -65,8 +111,8 @@ def save(rig_key, buttons):
 
     Saved entries of controls not on the canvas (currently hidden) are kept,
     so they get their position back when they become visible again."""
-    os.makedirs(layouts_dir(), exist_ok=True)
-    shapes = load(rig_key)
+    existing = _read(rig_key)
+    shapes = {s["target"]: s for s in existing.get("shapes", []) if "target" in s}
     for b in buttons:
         shapes[b.name] = {
             "target": b.name,
@@ -80,7 +126,6 @@ def save(rig_key, buttons):
         "rig": rig_key,
         "shapes": list(shapes.values()),
     }
-    path = path_for(rig_key)
-    with open(path, "w", encoding="utf-8") as handle:
-        json.dump(data, handle, indent=2)
-    return path
+    if existing.get("background"):
+        data["background"] = existing["background"]
+    return _write(rig_key, data)

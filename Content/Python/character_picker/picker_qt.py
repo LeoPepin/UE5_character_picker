@@ -49,7 +49,29 @@ class PickerCanvas(QtWidgets.QWidget):
         self._rubber = QtWidgets.QRubberBand(QtWidgets.QRubberBand.Rectangle, self)
         self._marquee_origin = None
         self._group = set()  # QPushButtons grouped for a multi-move (edit mode)
+        self._background = None  # QPixmap drawn behind the buttons
         self.setMinimumSize(220, 260)
+
+    def set_background(self, image_path):
+        """Show an image behind the buttons (None clears it). Returns False
+        if the image could not be loaded."""
+        pixmap = QtGui.QPixmap(image_path) if image_path else None
+        self._background = pixmap if pixmap is not None and not pixmap.isNull() else None
+        self.update()
+        return image_path is None or self._background is not None
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        if self._background is None:
+            return
+        # Stretched over the same area the normalized button positions use,
+        # so buttons stay on the same spot of the image when resizing.
+        w, h = self._inner_rect()
+        painter = QtGui.QPainter(self)
+        painter.setRenderHint(QtGui.QPainter.SmoothPixmapTransform)
+        painter.drawPixmap(QtCore.QRect(CANVAS_MARGIN, CANVAS_MARGIN, w, h),
+                           self._background)
+        painter.end()
 
     def set_edit_mode(self, enabled):
         self._edit_mode = bool(enabled)
@@ -223,6 +245,18 @@ class PickerWindow(QtWidgets.QWidget):
         root.setContentsMargins(8, 8, 8, 8)
         root.setSpacing(6)
 
+        background_bar = QtWidgets.QHBoxLayout()
+        self.add_bg_btn = QtWidgets.QPushButton("Add background")
+        self.add_bg_btn.setToolTip("Load an image behind this rig's picker")
+        self.add_bg_btn.clicked.connect(self._on_add_background)
+        background_bar.addWidget(self.add_bg_btn)
+        self.remove_bg_btn = QtWidgets.QPushButton("Remove background")
+        self.remove_bg_btn.setEnabled(False)
+        self.remove_bg_btn.clicked.connect(self._on_remove_background)
+        background_bar.addWidget(self.remove_bg_btn)
+        background_bar.addStretch(1)
+        root.addLayout(background_bar)
+
         header = QtWidgets.QHBoxLayout()
         self.combo = QtWidgets.QComboBox()
         self.combo.setSizePolicy(QtWidgets.QSizePolicy.Expanding,
@@ -353,6 +387,9 @@ class PickerWindow(QtWidgets.QWidget):
         if not self._entries:
             self._entry = None
             self.canvas.set_buttons([])
+            self.canvas.set_background(None)
+            self.add_bg_btn.setEnabled(False)
+            self.remove_bg_btn.setEnabled(False)
             self._set_status("No Control Rigs found in this project")
             return
 
@@ -371,6 +408,7 @@ class PickerWindow(QtWidgets.QWidget):
 
     def _load_entry(self, entry):
         self._entry = entry
+        self._load_background()
         hierarchy = entry.get_hierarchy()
         if hierarchy is None:
             self._buttons = []
@@ -426,6 +464,42 @@ class PickerWindow(QtWidgets.QWidget):
     def _on_clear(self):
         if self._entry:
             selection.clear_selection(self._entry)
+
+    def _load_background(self):
+        image_path = layout_store.get_background(self._entry.rig_key)
+        if not self.canvas.set_background(image_path):
+            unreal.log_warning(f"[CharacterPicker] Background not found: {image_path}")
+        self.add_bg_btn.setEnabled(True)
+        self.remove_bg_btn.setEnabled(image_path is not None)
+
+    def _on_add_background(self):
+        if not self._entry:
+            return
+        start_dir = os.path.dirname(layout_store.get_background(self._entry.rig_key)
+                                    or unreal.Paths.project_content_dir())
+        image_path, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self, "Picker background", start_dir,
+            "Images (*.png *.jpg *.jpeg *.bmp *.tga *.gif);;All files (*)")
+        if not image_path:
+            return
+        if not self.canvas.set_background(image_path):
+            self._load_background()  # restore the previous one
+            self._set_status(f"Could not load image: {image_path}")
+            return
+        layout_store.set_background(self._entry.rig_key, image_path)
+        self.remove_bg_btn.setEnabled(True)
+        self._set_status(f"Background set — {self._entry.label}")
+        # Our own write must not trigger the live-reload watcher.
+        self._refresh_watch_snapshot()
+
+    def _on_remove_background(self):
+        if not self._entry:
+            return
+        layout_store.set_background(self._entry.rig_key, None)
+        self.canvas.set_background(None)
+        self.remove_bg_btn.setEnabled(False)
+        self._set_status(f"Background removed — {self._entry.label}")
+        self._refresh_watch_snapshot()
 
     def _on_edit_toggled(self, checked):
         self.canvas.set_edit_mode(checked)
