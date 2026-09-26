@@ -217,6 +217,7 @@ class PickerWindow(QtWidgets.QWidget):
         self._entries = []
         self._entry = None
         self._buttons = []
+        self._visible_names = None
 
         root = QtWidgets.QVBoxLayout(self)
         root.setContentsMargins(8, 8, 8, 8)
@@ -321,6 +322,21 @@ class PickerWindow(QtWidgets.QWidget):
         elif json_changed and self._entry:
             self._load_entry(self._entry)
             self._set_status(f"Layout reloaded from disk — {self._entry.label}")
+        else:
+            self._check_visibility()
+
+    def _check_visibility(self):
+        """Rebuild the picker when controls are shown/hidden on the rig.
+        Skipped while editing so unsaved button moves are not lost."""
+        if not self._entry or self.edit_toggle.isChecked() or self.save_btn.isEnabled():
+            return
+        try:
+            hierarchy = self._entry.get_hierarchy()
+            visible = layout.visible_control_names(hierarchy) if hierarchy else None
+        except Exception:
+            return
+        if visible is not None and visible != self._visible_names:
+            self._load_entry(self._entry)
 
     # ------------------------------------------------------------------ data
 
@@ -361,6 +377,7 @@ class PickerWindow(QtWidgets.QWidget):
             self.canvas.set_buttons([])
             self._set_status(f"No hierarchy on {entry.label}")
             return
+        self._visible_names = layout.visible_control_names(hierarchy)
         self._buttons = layout.build_layout(hierarchy)
         overrides = layout_store.load(entry.rig_key)
         if overrides:

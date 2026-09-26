@@ -4,11 +4,14 @@ Two sources, merged into a single list of RigEntry objects:
 
 1. Live rigs bound on the Level Sequence currently open in Sequencer.
    Selecting controls on these highlights them in the viewport / anim panel.
-2. Every ControlRigBlueprint asset in the project (Asset Registry scan).
+2. Every ControlRigBlueprint asset under /Game (Asset Registry scan);
+   engine and plugin rigs are left out.
    Selecting controls on these drives the Control Rig asset editor.
 """
 
 import unreal
+
+PROJECT_CONTENT_ROOT = "/Game/"
 
 
 class RigEntry:
@@ -93,13 +96,17 @@ def find_sequencer_rigs():
 
 
 def find_asset_rigs():
-    """Every ControlRigBlueprint asset in the project."""
+    """Every ControlRigBlueprint asset in the project's Content folder."""
     entries = []
     registry = unreal.AssetRegistryHelpers.get_asset_registry()
     class_path = unreal.TopLevelAssetPath("/Script/ControlRigDeveloper", "ControlRigBlueprint")
     assets = registry.get_assets_by_class(class_path, search_sub_classes=True) or []
     for asset_data in assets:
         path = str(asset_data.get_editor_property("package_name"))
+        # Only the project's own content: skip rigs shipped with the engine
+        # and plugins (/Engine/, /ControlRig/, ...).
+        if not path.startswith(PROJECT_CONTENT_ROOT):
+            continue
         name = str(asset_data.get_editor_property("asset_name"))
         entries.append(RigEntry(
             label=name,

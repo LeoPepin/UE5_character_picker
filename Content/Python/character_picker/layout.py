@@ -82,6 +82,35 @@ def _is_pickable(settings):
     return True
 
 
+def _is_visible(hierarchy, key, settings):
+    """Whether the control's shape is shown in the viewport.
+
+    Reads the hierarchy it is given, so a Sequencer rig reports its live
+    state (e.g. FK controls hidden by an IK switch) and a blueprint reports
+    the "Shape Visible" setting of the asset."""
+    try:
+        return bool(hierarchy.get_control_visibility(key))
+    except Exception:
+        pass
+    if settings is not None:
+        for prop in ("shape_visible", "shape_enabled"):
+            try:
+                if not settings.get_editor_property(prop):
+                    return False
+            except Exception:
+                pass
+    return True
+
+
+def visible_control_names(hierarchy):
+    """Names of the controls currently visible, to detect visibility changes."""
+    names = set()
+    for key in _control_keys(hierarchy):
+        if _is_visible(hierarchy, key, _control_settings(hierarchy, key)):
+            names.add(str(key.name))
+    return frozenset(names)
+
+
 _FALLBACK_COLOR = unreal.LinearColor(0.3, 0.6, 1.0, 1.0)
 
 
@@ -123,6 +152,8 @@ def build_layout(hierarchy):
         if settings is None:
             missing_settings += 1
         if not _is_pickable(settings):
+            continue
+        if not _is_visible(hierarchy, key, settings):
             continue
         x, y, z = _shape_position(hierarchy, key)
         raw.append((key, name, (x, y, z), _color_of(settings),

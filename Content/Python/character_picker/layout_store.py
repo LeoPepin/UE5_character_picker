@@ -61,21 +61,24 @@ def apply_overrides(buttons, overrides):
 
 
 def save(rig_key, buttons):
-    """Write the current button placement to the rig's layout file."""
+    """Write the current button placement to the rig's layout file.
+
+    Saved entries of controls not on the canvas (currently hidden) are kept,
+    so they get their position back when they become visible again."""
     os.makedirs(layouts_dir(), exist_ok=True)
+    shapes = load(rig_key)
+    for b in buttons:
+        shapes[b.name] = {
+            "target": b.name,
+            "left": round(b.x, 4),
+            "top": round(b.y, 4),
+            "shape": b.shape,
+            "scale": round(b.scale, 3),
+        }
     data = {
         "version": VERSION,
         "rig": rig_key,
-        "shapes": [
-            {
-                "target": b.name,
-                "left": round(b.x, 4),
-                "top": round(b.y, 4),
-                "shape": b.shape,
-                "scale": round(b.scale, 3),
-            }
-            for b in buttons
-        ],
+        "shapes": list(shapes.values()),
     }
     path = path_for(rig_key)
     with open(path, "w", encoding="utf-8") as handle:
